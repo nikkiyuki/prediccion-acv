@@ -1,0 +1,6 @@
+age,hypertension,heart_disease,ever_married_Yes,work_type_Govt_job,work_type_Never_worked,work_type_Private,work_type_Self-employed,work_type_children,avg_glucose_level,bmi,smoking_status_Unknown,smoking_status_formerly smoked,smoking_status_never smoked,smoking_status_smokes
+67,1,1,1,0,0,1,0,0,210.5,32.1,0,1,0,0
+45,0,0,1,0,0,0,1,0,95.3,27.4,0,0,1,0
+23,0,0,0,0,0,1,0,0,82.7,21.8,1,0,0,0
+58,1,0,1,1,0,0,0,0,145.0,29.9,0,0,0,1
+8,0,0,0,0,1,0,0,1,70.2,17.5,1,0,0,0
