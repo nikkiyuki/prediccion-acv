@@ -8,6 +8,8 @@ datos clínicos y demográficos básicos. Se despliega con una **interfaz gráfi
 
 **App en línea:** https://prediccion-acv-upb.streamlit.app
 
+![Despliegue en Streamlit](imagenes/pantallazo_2.png)
+
 
 ## Contenido del repositorio
 
@@ -19,6 +21,7 @@ datos clínicos y demográficos básicos. Se despliega con una **interfaz gráfi
 | `entrenar_modelo.py` | Entrena el modelo final (SMOTENC → MinMaxScaler → Random Forest) con el mismo procedimiento del notebook y genera `modelo_final.pkl` |
 | `data/healthcare-dataset-stroke-data.csv` | Datos de entrenamiento ([Kaggle](https://www.kaggle.com/datasets/aouatifcherdid/healthcare-dataset-stroke-data)) |
 | `data/datos_futuros.csv` | Pacientes nuevos para probar el despliegue |
+| `imagenes/` | Pantallazos del despliegue |
 | `requirements.txt` | Librerías necesarias |
 
 ## Modelo
