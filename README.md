@@ -6,12 +6,15 @@ Jacobo Arévalo Zea · Zharick Rocío Carrillo Grijalba · Nicole Yuqui Vásquez
 Modelo predictivo que estima la probabilidad de que un paciente sufra un **accidente cerebrovascular (ACV)** a partir de
 datos clínicos y demográficos básicos. Se despliega con una **interfaz gráfica en Streamlit**.
 
+**App en línea:** https://prediccion-acv-upb.streamlit.app
+
+
 ## Contenido del repositorio
 
 | Archivo | Descripción |
 |---|---|
 | `notebooks/Mineria_Datos_Python.ipynb` | Selección de factores, 6 modelos con validación cruzada, revisión de overfitting/underfitting y GridSearch (1.A, 1.B, 1.C) |
-| `notebooks/Despliegue_ACV.ipynb` | Despliegue en Colab: carga del modelo, predicción de datos futuros e interfaz con Gradio |
+| `notebooks/Despliegue_ACV.ipynb` | Despliegue en Colab: carga del modelo, predicción de datos futuros y la app de Streamlit dentro del notebook |
 | `app.py` | Despliegue con interfaz gráfica en **Streamlit** (1.D) |
 | `entrenar_modelo.py` | Entrena el modelo final (SMOTENC → MinMaxScaler → Random Forest) con el mismo procedimiento del notebook y genera `modelo_final.pkl` |
 | `data/healthcare-dataset-stroke-data.csv` | Datos de entrenamiento ([Kaggle](https://www.kaggle.com/datasets/aouatifcherdid/healthcare-dataset-stroke-data)) |
