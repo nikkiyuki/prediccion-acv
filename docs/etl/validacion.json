@@ -1,0 +1,24 @@
+{
+  "flujo": "ETL_ACV",
+  "nodos": 78,
+  "pacientes": 5110,
+  "evaluaciones": 5110,
+  "imc_imputados": 201,
+  "mediana_imc": 28.1,
+  "perfiles": 240,
+  "fechas": 365,
+  "prediccion": 12,
+  "clave_historico_sin_prediccion": 4,
+  "glucosa_cortes": [
+    100,
+    126
+  ],
+  "validacion_por_registro": 5110,
+  "catalogos_y_esquema": "idénticos a los de Nicole",
+  "integridad": "ok",
+  "errores_fk": 0,
+  "duplicados": "Antiuniones nativas por claves de paciente y evaluación; solo se insertan filas aún no existentes.",
+  "fecha_validacion": "2026-10-28",
+  "bodega_git_blob": "4603860e9ac770fa87e5d2932b8b02dcff4bcd95",
+  "distribucion": "Flujo sin datos ejecutados en caché. Elegir la ruta de una copia de trabajo de la bodega antes de ejecutar."
+}

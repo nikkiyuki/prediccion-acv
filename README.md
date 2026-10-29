@@ -49,3 +49,7 @@ streamlit run app.py
 3. **Deploy.**
 
 > Herramienta académica. No reemplaza un diagnóstico médico.
+
+## Práctica de BI: ETL en KNIME
+
+El [flujo ETL_ACV.knwf](knime/ETL_ACV.knwf) carga el histórico en la bodega del punto 1. Las instrucciones de conexión, transformaciones y resultados están en la [documentación de la ETL](docs/etl/README.md).
