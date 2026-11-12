@@ -2,12 +2,12 @@
 
 Este flujo corresponde al punto 2 de la práctica de BI: transforma el CSV histórico y carga la dimensión de pacientes y la tabla de hechos de la bodega diseñada por el equipo.
 
-> **Versión corregida (noviembre de 2026).** Siguiendo la retroalimentación de la docente, la hipertensión y la enfermedad cardíaca pasaron a `dim_paciente` (son de la persona y no cambian entre consultas), los rangos de edad, glucosa e IMC pasaron a la tabla de hechos (se miden en cada evaluación) y se eliminó `dim_perfil_clinico`. En el flujo se quitaron el DB Query Reader del perfil clínico y su Joiner; el GroupBy agrupa también `hipertension` y `enfermedad_cardiaca`, y el Column Filter de evaluaciones incluye los tres rangos. Detalle en [bodega/CAMBIOS_ETL.md](../../bodega/CAMBIOS_ETL.md).
+> **Versión corregida (noviembre de 2026).** Siguiendo la retroalimentación de la docente, la hipertensión y la enfermedad cardíaca pasaron a `dim_paciente` (son de la persona y no cambian entre consultas), los rangos de edad, glucosa e IMC pasaron a la tabla de hechos (se miden en cada evaluación) y se eliminó `dim_perfil_clinico`. En el flujo se quitaron el DB Query Reader del perfil clínico y su Joiner; el GroupBy agrupa también `hipertension` y `enfermedad_cardiaca`, y el Column Filter de evaluaciones incluye los tres rangos. Después se aplicó la misma regla al nivel de riesgo y a la fuente del dato: pasaron a la tabla de hechos y se eliminó `dim_prediccion`, así que la bodega queda con dos dimensiones (`dim_paciente` y `dim_tiempo`) y el flujo con 74 nodos. Detalle en [bodega/CAMBIOS_ETL.md](../../bodega/CAMBIOS_ETL.md).
 
 ## Archivos
 
 - [ETL_ACV.knwf](../../knime/ETL_ACV.knwf): proyecto KNIME con el CSV y las tablas de equivalencias incluidos.
-- [bodega_acv.db](../../bodega/bodega_acv.db): base original, con los catálogos de tiempo y predicción cargados y pacientes y evaluaciones vacíos.
+- [bodega_acv.db](../../bodega/bodega_acv.db): base original, con el calendario de `dim_tiempo` cargado y pacientes y evaluaciones vacíos.
 - [crear_bodega.sql](../../bodega/crear_bodega.sql): creación de la bodega del punto 1.
 - [flujo.svg](flujo.svg): vista del flujo exportada desde KNIME.
 - [validacion.json](validacion.json): resultados de la validación realizada.
@@ -15,7 +15,7 @@ Este flujo corresponde al punto 2 de la práctica de BI: transforma el CSV hist�
 ## Importar y ejecutar
 
 1. Descargar `knime/ETL_ACV.knwf` e importarlo desde **Local space → Import workflow** en KNIME. Se validó con KNIME Analytics Platform 5.12.
-2. Copiar `bodega/bodega_acv.db` a una carpeta de trabajo con el nombre `bodega_acv_trabajo.db`. Así se conserva la base original del repositorio. La copia debe contener sus dos catálogos iniciales (tiempo y predicción).
+2. Copiar `bodega/bodega_acv.db` a una carpeta de trabajo con el nombre `bodega_acv_trabajo.db`. Así se conserva la base original del repositorio. La copia debe contener el calendario inicial de `dim_tiempo`.
 3. Abrir **DB Connector** y establecer la URL JDBC de esa copia. Por ejemplo, en Windows: `jdbc:sqlite:C:/ruta/bodega_acv_trabajo.db`. La ruta se deja vacía en el archivo distribuido para que cada integrante elija su copia; no requiere usuario ni contraseña.
 4. Ejecutar todo el flujo. Los CSV usan rutas relativas al proyecto importado; no es necesario configurar cada lector.
 5. Consultar la salida del último **DB Query Reader** y comparar `resultado` con `esperado`.
@@ -31,10 +31,10 @@ El archivo se distribuye sin resultados en caché: hay que ejecutarlo para gener
 - Para los rangos de edad, glucosa e IMC, **Row Filter** selecciona los intervalos, **Constant Value Column Appender** agrega las etiquetas y **Concatenate** reúne las ramas disjuntas.
 - **Column Filter**, **Column Renamer** y **Joiner** conservan el ID original y agregan la clave de paciente.
 - **GroupBy** obtiene pacientes únicos.
-- Los **DB Query Reader** leen los catálogos existentes. Los **Joiner** encuentran las claves de fecha y predicción.
+- Los **DB Query Reader** leen los catálogos existentes. El **Joiner** encuentra la clave de fecha; la fuente del dato y el nivel de riesgo se agregan como columnas de la evaluación.
 - Dos uniones que conservan solo las filas sin coincidencia excluyen pacientes y evaluaciones ya cargados. Los dos **DB Writer** insertan únicamente registros nuevos. Esta ETL no actualiza evaluaciones ya existentes.
 
-Los 76 nodos no incluyen Rule Engine ni SQL Executor. Los DB Query Reader solo consultan la base.
+Los 74 nodos no incluyen Rule Engine ni SQL Executor. Los DB Query Reader solo consultan la base.
 
 ## Criterios utilizados
 
@@ -43,13 +43,13 @@ Los 76 nodos no incluyen Rule Engine ni SQL Executor. Los DB Query Reader solo c
 - Glucosa, según el catálogo del punto 1: menor de 100 → Normal; desde 100 hasta menos de 126 → Prediabetes; desde 126 → Diabetes.
 - IMC: menor de 18,5 → Bajo peso; desde 18,5 hasta menos de 25 → Normal; desde 25 hasta menos de 30 → Sobrepeso; desde 30 → Obesidad.
 - Los tipos de trabajo respetan las etiquetas de la bodega: Empleado privado, Independiente, Empleado público, Niño / menor y Nunca ha trabajado.
-- `acv_real` conserva `stroke`. `probabilidad_acv` y `prediccion_acv` quedan NULL. El histórico se relaciona con **Sin predicción**, clave 4, obtenida mediante una unión con el catálogo. La clave 1 corresponde a BAJO y no se utiliza para registros sin predicción.
+- `acv_real` conserva `stroke`. `probabilidad_acv` y `prediccion_acv` quedan NULL. El histórico se guarda con `fuente` = **Histórico Kaggle** y `nivel_riesgo` = **Sin predicción**, directamente en la tabla de hechos.
 
 No se cambian el esquema ni los catálogos. La carga actual utiliza el histórico; el CSV de datos futuros queda como referencia, sin cargar. El entrenamiento y las visualizaciones corresponden a los puntos 3 y 4.
 
 ## Validación
 
-Con la versión corregida, la salida del último DB Query Reader debe mostrar `resultado` igual a `esperado` en todas sus filas: 5.110 pacientes y evaluaciones, 365 fechas, 12 entradas de predicción, 201 IMC imputados, 249 ACV reales, 498 hipertensos, 276 con enfermedad cardíaca, 518 mayores de 75 y cero errores de claves foráneas. Estos valores se comprobaron con una carga de prueba equivalente sobre la bodega corregida.
+Con la versión corregida, la salida del último DB Query Reader debe mostrar `resultado` igual a `esperado` en todas sus filas: 5.110 pacientes y evaluaciones, 365 fechas, 5.110 evaluaciones históricas con fuente “Histórico Kaggle” y nivel “Sin predicción”, 201 IMC imputados, 249 ACV reales, 498 hipertensos, 276 con enfermedad cardíaca, 518 mayores de 75 y cero errores de claves foráneas. Estos valores se comprobaron con una carga de prueba equivalente sobre la bodega corregida.
 
 Validación de la versión anterior (2026-10-28, con `dim_perfil_clinico`): se ejecutaron los 78 nodos y se verificaron individualmente los 5.110 registros contra el CSV y los perfiles de la base publicada:
 

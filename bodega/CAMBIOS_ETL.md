@@ -1,5 +1,9 @@
 # Cambios en KNIME por la corrección del diseño de la bodega
 
+> **Segunda corrección (12 de noviembre de 2026).** Aplicando la misma regla de la docente (la variable objetivo y todo lo que cambia en el momento de la medición va en la tabla de hechos), se eliminó también `dim_prediccion`: la `fuente` del dato y el `nivel_riesgo` del modelo pasaron a la tabla de hechos como atributos de la medición. La bodega queda con **2 dimensiones** (`dim_paciente` y `dim_tiempo`). En el flujo se borraron el lector de `dim_prediccion` y el Joiner *"Buscar la clave real de predicción"*; el Column Filter de evaluaciones incluye `fuente` y `nivel_riesgo`; el antijoin de duplicados compara `sk_paciente`, `sk_tiempo` y `fuente`; y la consulta de validación se actualizó. El flujo queda con **74 nodos**. Estos cambios ya están aplicados en `knime/ETL_ACV.knwf`.
+
+## Primera corrección
+
 ## Qué cambió en la bodega
 
 La docente pidió separar lo que es de la persona de lo que se mide en cada consulta:

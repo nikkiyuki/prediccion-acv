@@ -1,6 +1,6 @@
 -- =====================================================================
 -- Bodega de datos: Predicción de riesgo de ACV  (versión corregida)
--- Esquema estrella: 1 tabla de hechos + 3 dimensiones
+-- Esquema estrella: 1 tabla de hechos + 2 dimensiones
 -- Motor: SQLite 3 (compatible con KNIME mediante el nodo "SQLite Connector",
 --        cuyo driver JDBC viene incluido en KNIME Analytics Platform)
 -- Minería de Datos en Python · Universidad Pontificia Bolivariana
@@ -8,8 +8,9 @@
 -- Criterio de diseño:
 --   * dim_paciente guarda lo que es de la persona y NO cambia en cada consulta
 --     (demografía, trabajo, tabaquismo, hipertensión, enfermedad cardíaca).
---   * fact_evaluacion_acv guarda la variable objetivo y todo lo que se mide en
---     el momento de la evaluación (edad, glucosa, IMC y sus rangos).
+--   * fact_evaluacion_acv guarda la variable objetivo y todo lo que se mide o
+--     cambia en el momento de la evaluación (edad, glucosa, IMC y sus rangos,
+--     fuente del dato, probabilidad, predicción y nivel de riesgo del modelo).
 -- =====================================================================
 
 PRAGMA foreign_keys = ON;
@@ -53,32 +54,16 @@ CREATE TABLE dim_tiempo (
 );
 
 -- ---------------------------------------------------------------------
--- DIMENSIÓN 3: Predicción (fuente del dato + nivel de riesgo del modelo)
--- 3 fuentes x 4 niveles = 12 filas, precargadas en este script.
--- Cortes de riesgo iguales a nivel_riesgo() de app.py.
--- ---------------------------------------------------------------------
-CREATE TABLE dim_prediccion (
-    sk_prediccion         INTEGER PRIMARY KEY,
-    fuente                TEXT NOT NULL,        -- Histórico Kaggle, Datos futuros CSV, App Streamlit
-    tiene_resultado_real  TEXT NOT NULL,        -- Sí solo para el histórico
-    nivel_riesgo          TEXT NOT NULL,        -- BAJO, MODERADO, ALTO, Sin predicción
-    prob_min              REAL,
-    prob_max              REAL,
-    accion                TEXT NOT NULL,
-    UNIQUE (fuente, nivel_riesgo)
-);
-
--- ---------------------------------------------------------------------
 -- TABLA DE HECHOS: una fila por evaluación de un paciente
 -- Guarda la variable objetivo y todo lo que se mide en la evaluación.
--- Los rangos son atributos de la medición (dimensiones degeneradas).
+-- Los rangos, la fuente y el nivel de riesgo son atributos de la medición
+-- (dimensiones degeneradas).
 -- La llena la ETL de KNIME.
 -- ---------------------------------------------------------------------
 CREATE TABLE fact_evaluacion_acv (
     sk_evaluacion      INTEGER PRIMARY KEY AUTOINCREMENT,
     sk_paciente        INTEGER NOT NULL REFERENCES dim_paciente (sk_paciente),
     sk_tiempo          INTEGER NOT NULL REFERENCES dim_tiempo (sk_tiempo),
-    sk_prediccion      INTEGER NOT NULL REFERENCES dim_prediccion (sk_prediccion),
     edad               REAL    NOT NULL,        -- años al momento de la evaluación
     rango_edad         TEXT    NOT NULL CHECK (rango_edad IN ('0–17', '18–39', '40–59', '60–74', '75+')),
     glucosa_promedio   REAL    NOT NULL,        -- mg/dL
@@ -86,31 +71,16 @@ CREATE TABLE fact_evaluacion_acv (
     imc                REAL    NOT NULL,        -- kg/m2 (nulos imputados con la mediana)
     rango_imc          TEXT    NOT NULL CHECK (rango_imc IN ('Bajo peso', 'Normal', 'Sobrepeso', 'Obesidad')),
     imc_imputado       INTEGER NOT NULL DEFAULT 0 CHECK (imc_imputado IN (0, 1)),
+    fuente             TEXT    NOT NULL CHECK (fuente IN ('Histórico Kaggle', 'Datos futuros CSV', 'App Streamlit')),
     acv_real           INTEGER CHECK (acv_real IN (0, 1)),          -- variable objetivo (stroke); NULL en pacientes nuevos
     probabilidad_acv   REAL    CHECK (probabilidad_acv BETWEEN 0 AND 1),
     prediccion_acv     INTEGER CHECK (prediccion_acv IN (0, 1)),    -- 1 si probabilidad_acv >= 0.5
+    nivel_riesgo       TEXT    NOT NULL CHECK (nivel_riesgo IN ('BAJO', 'MODERADO', 'ALTO', 'Sin predicción')),  -- BAJO <0.25, MODERADO 0.25-0.5, ALTO >=0.5 (app.py)
     cantidad           INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE INDEX ix_fact_paciente   ON fact_evaluacion_acv (sk_paciente);
 CREATE INDEX ix_fact_tiempo     ON fact_evaluacion_acv (sk_tiempo);
-CREATE INDEX ix_fact_prediccion ON fact_evaluacion_acv (sk_prediccion);
-
--- Carga de dim_prediccion (12 filas)
-BEGIN;
-INSERT INTO dim_prediccion VALUES (1, 'Histórico Kaggle', 'Sí', 'BAJO', 0.0, 0.25, 'Sin alerta');
-INSERT INTO dim_prediccion VALUES (2, 'Histórico Kaggle', 'Sí', 'MODERADO', 0.25, 0.5, 'Seguimiento');
-INSERT INTO dim_prediccion VALUES (3, 'Histórico Kaggle', 'Sí', 'ALTO', 0.5, 1.0, 'Valoración médica prioritaria');
-INSERT INTO dim_prediccion VALUES (4, 'Histórico Kaggle', 'Sí', 'Sin predicción', NULL, NULL, 'Ninguna');
-INSERT INTO dim_prediccion VALUES (5, 'Datos futuros CSV', 'No', 'BAJO', 0.0, 0.25, 'Sin alerta');
-INSERT INTO dim_prediccion VALUES (6, 'Datos futuros CSV', 'No', 'MODERADO', 0.25, 0.5, 'Seguimiento');
-INSERT INTO dim_prediccion VALUES (7, 'Datos futuros CSV', 'No', 'ALTO', 0.5, 1.0, 'Valoración médica prioritaria');
-INSERT INTO dim_prediccion VALUES (8, 'Datos futuros CSV', 'No', 'Sin predicción', NULL, NULL, 'Ninguna');
-INSERT INTO dim_prediccion VALUES (9, 'App Streamlit', 'No', 'BAJO', 0.0, 0.25, 'Sin alerta');
-INSERT INTO dim_prediccion VALUES (10, 'App Streamlit', 'No', 'MODERADO', 0.25, 0.5, 'Seguimiento');
-INSERT INTO dim_prediccion VALUES (11, 'App Streamlit', 'No', 'ALTO', 0.5, 1.0, 'Valoración médica prioritaria');
-INSERT INTO dim_prediccion VALUES (12, 'App Streamlit', 'No', 'Sin predicción', NULL, NULL, 'Ninguna');
-COMMIT;
 
 -- Carga de dim_tiempo (calendario 2026)
 BEGIN;
