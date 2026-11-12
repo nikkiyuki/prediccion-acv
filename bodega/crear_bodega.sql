@@ -1,9 +1,15 @@
 -- =====================================================================
--- Bodega de datos: Predicción de riesgo de ACV
--- Esquema estrella: 1 tabla de hechos + 4 dimensiones
+-- Bodega de datos: Predicción de riesgo de ACV  (versión corregida)
+-- Esquema estrella: 1 tabla de hechos + 3 dimensiones
 -- Motor: SQLite 3 (compatible con KNIME mediante el nodo "SQLite Connector",
 --        cuyo driver JDBC viene incluido en KNIME Analytics Platform)
 -- Minería de Datos en Python · Universidad Pontificia Bolivariana
+--
+-- Criterio de diseño:
+--   * dim_paciente guarda lo que es de la persona y NO cambia en cada consulta
+--     (demografía, trabajo, tabaquismo, hipertensión, enfermedad cardíaca).
+--   * fact_evaluacion_acv guarda la variable objetivo y todo lo que se mide en
+--     el momento de la evaluación (edad, glucosa, IMC y sus rangos).
 -- =====================================================================
 
 PRAGMA foreign_keys = ON;
@@ -15,38 +21,25 @@ DROP TABLE IF EXISTS dim_tiempo;
 DROP TABLE IF EXISTS dim_prediccion;
 
 -- ---------------------------------------------------------------------
--- DIMENSIÓN 1: Paciente (demografía + trabajo + tabaquismo)
+-- DIMENSIÓN 1: Paciente
+-- Todo lo de la persona que no cambia cada vez que va al médico.
 -- La llena la ETL de KNIME: una fila por paciente.
 -- ---------------------------------------------------------------------
 CREATE TABLE dim_paciente (
-    sk_paciente        INTEGER PRIMARY KEY,
-    id_paciente        INTEGER,                 -- id original del CSV (NULL en pacientes nuevos)
-    genero             TEXT NOT NULL,           -- Femenino, Masculino, Otro, Desconocido
-    alguna_vez_casado  TEXT NOT NULL,           -- Sí, No
-    tipo_residencia    TEXT NOT NULL,           -- Urbana, Rural, Desconocido
-    tipo_trabajo       TEXT NOT NULL,           -- Empleado privado, Independiente, Empleado público, Niño / menor, Nunca ha trabajado
-    tabaquismo         TEXT NOT NULL,           -- Nunca ha fumado, Exfumador, Fuma actualmente, Desconocido
-    fuma_o_fumo        TEXT NOT NULL            -- Sí si fuma actualmente o es exfumador
+    sk_paciente          INTEGER PRIMARY KEY,
+    id_paciente          INTEGER,               -- id original del CSV (NULL en pacientes nuevos)
+    genero               TEXT NOT NULL,         -- Femenino, Masculino, Otro, Desconocido
+    alguna_vez_casado    TEXT NOT NULL,         -- Sí, No
+    tipo_residencia      TEXT NOT NULL,         -- Urbana, Rural, Desconocido
+    tipo_trabajo         TEXT NOT NULL,         -- Empleado privado, Independiente, Empleado público, Niño / menor, Nunca ha trabajado
+    tabaquismo           TEXT NOT NULL,         -- Nunca ha fumado, Exfumador, Fuma actualmente, Desconocido
+    fuma_o_fumo          TEXT NOT NULL,         -- Sí, No, Desconocido
+    hipertension         TEXT NOT NULL CHECK (hipertension IN ('Sí', 'No')),
+    enfermedad_cardiaca  TEXT NOT NULL CHECK (enfermedad_cardiaca IN ('Sí', 'No'))
 );
 
 -- ---------------------------------------------------------------------
--- DIMENSIÓN 2: Perfil clínico (dimensión basura)
--- Condición (hipertensión + cardíaca) x rango edad x rango glucosa x rango IMC
--- 4 x 5 x 3 x 4 = 240 filas, precargadas en este script.
--- ---------------------------------------------------------------------
-CREATE TABLE dim_perfil_clinico (
-    sk_perfil_clinico    INTEGER PRIMARY KEY,
-    hipertension         TEXT NOT NULL,         -- Sí, No
-    enfermedad_cardiaca  TEXT NOT NULL,         -- Sí, No
-    condicion            TEXT NOT NULL,         -- Ninguna, Solo hipertensión, Solo cardíaca, Ambas
-    rango_edad           TEXT NOT NULL,         -- 0–17, 18–39, 40–59, 60–74, 75+
-    rango_glucosa        TEXT NOT NULL,         -- Normal (<100), Prediabetes (100–125), Diabetes (>=126)
-    rango_imc            TEXT NOT NULL,         -- Bajo peso (<18.5), Normal, Sobrepeso (25–29.9), Obesidad (>=30)
-    UNIQUE (hipertension, enfermedad_cardiaca, rango_edad, rango_glucosa, rango_imc)
-);
-
--- ---------------------------------------------------------------------
--- DIMENSIÓN 3: Tiempo (fecha de carga o de predicción)
+-- DIMENSIÓN 2: Tiempo (fecha de carga o de predicción)
 -- Precargada con el calendario 2026.
 -- ---------------------------------------------------------------------
 CREATE TABLE dim_tiempo (
@@ -60,7 +53,7 @@ CREATE TABLE dim_tiempo (
 );
 
 -- ---------------------------------------------------------------------
--- DIMENSIÓN 4: Predicción (fuente del dato + nivel de riesgo del modelo)
+-- DIMENSIÓN 3: Predicción (fuente del dato + nivel de riesgo del modelo)
 -- 3 fuentes x 4 niveles = 12 filas, precargadas en este script.
 -- Cortes de riesgo iguales a nivel_riesgo() de app.py.
 -- ---------------------------------------------------------------------
@@ -77,17 +70,21 @@ CREATE TABLE dim_prediccion (
 
 -- ---------------------------------------------------------------------
 -- TABLA DE HECHOS: una fila por evaluación de un paciente
+-- Guarda la variable objetivo y todo lo que se mide en la evaluación.
+-- Los rangos son atributos de la medición (dimensiones degeneradas).
 -- La llena la ETL de KNIME.
 -- ---------------------------------------------------------------------
 CREATE TABLE fact_evaluacion_acv (
     sk_evaluacion      INTEGER PRIMARY KEY AUTOINCREMENT,
     sk_paciente        INTEGER NOT NULL REFERENCES dim_paciente (sk_paciente),
-    sk_perfil_clinico  INTEGER NOT NULL REFERENCES dim_perfil_clinico (sk_perfil_clinico),
     sk_tiempo          INTEGER NOT NULL REFERENCES dim_tiempo (sk_tiempo),
     sk_prediccion      INTEGER NOT NULL REFERENCES dim_prediccion (sk_prediccion),
-    edad               REAL    NOT NULL,        -- años
+    edad               REAL    NOT NULL,        -- años al momento de la evaluación
+    rango_edad         TEXT    NOT NULL CHECK (rango_edad IN ('0–17', '18–39', '40–59', '60–74', '75+')),
     glucosa_promedio   REAL    NOT NULL,        -- mg/dL
+    rango_glucosa      TEXT    NOT NULL CHECK (rango_glucosa IN ('Normal', 'Prediabetes', 'Diabetes')),
     imc                REAL    NOT NULL,        -- kg/m2 (nulos imputados con la mediana)
+    rango_imc          TEXT    NOT NULL CHECK (rango_imc IN ('Bajo peso', 'Normal', 'Sobrepeso', 'Obesidad')),
     imc_imputado       INTEGER NOT NULL DEFAULT 0 CHECK (imc_imputado IN (0, 1)),
     acv_real           INTEGER CHECK (acv_real IN (0, 1)),          -- variable objetivo (stroke); NULL en pacientes nuevos
     probabilidad_acv   REAL    CHECK (probabilidad_acv BETWEEN 0 AND 1),
@@ -96,253 +93,8 @@ CREATE TABLE fact_evaluacion_acv (
 );
 
 CREATE INDEX ix_fact_paciente   ON fact_evaluacion_acv (sk_paciente);
-CREATE INDEX ix_fact_perfil     ON fact_evaluacion_acv (sk_perfil_clinico);
 CREATE INDEX ix_fact_tiempo     ON fact_evaluacion_acv (sk_tiempo);
 CREATE INDEX ix_fact_prediccion ON fact_evaluacion_acv (sk_prediccion);
-
--- Carga de dim_perfil_clinico (240 filas)
-BEGIN;
-INSERT INTO dim_perfil_clinico VALUES (1, 'No', 'No', 'Ninguna', '0–17', 'Normal', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (2, 'No', 'No', 'Ninguna', '0–17', 'Normal', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (3, 'No', 'No', 'Ninguna', '0–17', 'Normal', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (4, 'No', 'No', 'Ninguna', '0–17', 'Normal', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (5, 'No', 'No', 'Ninguna', '0–17', 'Prediabetes', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (6, 'No', 'No', 'Ninguna', '0–17', 'Prediabetes', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (7, 'No', 'No', 'Ninguna', '0–17', 'Prediabetes', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (8, 'No', 'No', 'Ninguna', '0–17', 'Prediabetes', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (9, 'No', 'No', 'Ninguna', '0–17', 'Diabetes', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (10, 'No', 'No', 'Ninguna', '0–17', 'Diabetes', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (11, 'No', 'No', 'Ninguna', '0–17', 'Diabetes', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (12, 'No', 'No', 'Ninguna', '0–17', 'Diabetes', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (13, 'No', 'No', 'Ninguna', '18–39', 'Normal', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (14, 'No', 'No', 'Ninguna', '18–39', 'Normal', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (15, 'No', 'No', 'Ninguna', '18–39', 'Normal', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (16, 'No', 'No', 'Ninguna', '18–39', 'Normal', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (17, 'No', 'No', 'Ninguna', '18–39', 'Prediabetes', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (18, 'No', 'No', 'Ninguna', '18–39', 'Prediabetes', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (19, 'No', 'No', 'Ninguna', '18–39', 'Prediabetes', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (20, 'No', 'No', 'Ninguna', '18–39', 'Prediabetes', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (21, 'No', 'No', 'Ninguna', '18–39', 'Diabetes', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (22, 'No', 'No', 'Ninguna', '18–39', 'Diabetes', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (23, 'No', 'No', 'Ninguna', '18–39', 'Diabetes', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (24, 'No', 'No', 'Ninguna', '18–39', 'Diabetes', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (25, 'No', 'No', 'Ninguna', '40–59', 'Normal', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (26, 'No', 'No', 'Ninguna', '40–59', 'Normal', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (27, 'No', 'No', 'Ninguna', '40–59', 'Normal', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (28, 'No', 'No', 'Ninguna', '40–59', 'Normal', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (29, 'No', 'No', 'Ninguna', '40–59', 'Prediabetes', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (30, 'No', 'No', 'Ninguna', '40–59', 'Prediabetes', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (31, 'No', 'No', 'Ninguna', '40–59', 'Prediabetes', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (32, 'No', 'No', 'Ninguna', '40–59', 'Prediabetes', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (33, 'No', 'No', 'Ninguna', '40–59', 'Diabetes', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (34, 'No', 'No', 'Ninguna', '40–59', 'Diabetes', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (35, 'No', 'No', 'Ninguna', '40–59', 'Diabetes', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (36, 'No', 'No', 'Ninguna', '40–59', 'Diabetes', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (37, 'No', 'No', 'Ninguna', '60–74', 'Normal', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (38, 'No', 'No', 'Ninguna', '60–74', 'Normal', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (39, 'No', 'No', 'Ninguna', '60–74', 'Normal', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (40, 'No', 'No', 'Ninguna', '60–74', 'Normal', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (41, 'No', 'No', 'Ninguna', '60–74', 'Prediabetes', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (42, 'No', 'No', 'Ninguna', '60–74', 'Prediabetes', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (43, 'No', 'No', 'Ninguna', '60–74', 'Prediabetes', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (44, 'No', 'No', 'Ninguna', '60–74', 'Prediabetes', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (45, 'No', 'No', 'Ninguna', '60–74', 'Diabetes', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (46, 'No', 'No', 'Ninguna', '60–74', 'Diabetes', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (47, 'No', 'No', 'Ninguna', '60–74', 'Diabetes', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (48, 'No', 'No', 'Ninguna', '60–74', 'Diabetes', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (49, 'No', 'No', 'Ninguna', '75+', 'Normal', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (50, 'No', 'No', 'Ninguna', '75+', 'Normal', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (51, 'No', 'No', 'Ninguna', '75+', 'Normal', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (52, 'No', 'No', 'Ninguna', '75+', 'Normal', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (53, 'No', 'No', 'Ninguna', '75+', 'Prediabetes', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (54, 'No', 'No', 'Ninguna', '75+', 'Prediabetes', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (55, 'No', 'No', 'Ninguna', '75+', 'Prediabetes', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (56, 'No', 'No', 'Ninguna', '75+', 'Prediabetes', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (57, 'No', 'No', 'Ninguna', '75+', 'Diabetes', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (58, 'No', 'No', 'Ninguna', '75+', 'Diabetes', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (59, 'No', 'No', 'Ninguna', '75+', 'Diabetes', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (60, 'No', 'No', 'Ninguna', '75+', 'Diabetes', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (61, 'Sí', 'No', 'Solo hipertensión', '0–17', 'Normal', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (62, 'Sí', 'No', 'Solo hipertensión', '0–17', 'Normal', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (63, 'Sí', 'No', 'Solo hipertensión', '0–17', 'Normal', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (64, 'Sí', 'No', 'Solo hipertensión', '0–17', 'Normal', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (65, 'Sí', 'No', 'Solo hipertensión', '0–17', 'Prediabetes', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (66, 'Sí', 'No', 'Solo hipertensión', '0–17', 'Prediabetes', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (67, 'Sí', 'No', 'Solo hipertensión', '0–17', 'Prediabetes', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (68, 'Sí', 'No', 'Solo hipertensión', '0–17', 'Prediabetes', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (69, 'Sí', 'No', 'Solo hipertensión', '0–17', 'Diabetes', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (70, 'Sí', 'No', 'Solo hipertensión', '0–17', 'Diabetes', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (71, 'Sí', 'No', 'Solo hipertensión', '0–17', 'Diabetes', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (72, 'Sí', 'No', 'Solo hipertensión', '0–17', 'Diabetes', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (73, 'Sí', 'No', 'Solo hipertensión', '18–39', 'Normal', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (74, 'Sí', 'No', 'Solo hipertensión', '18–39', 'Normal', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (75, 'Sí', 'No', 'Solo hipertensión', '18–39', 'Normal', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (76, 'Sí', 'No', 'Solo hipertensión', '18–39', 'Normal', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (77, 'Sí', 'No', 'Solo hipertensión', '18–39', 'Prediabetes', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (78, 'Sí', 'No', 'Solo hipertensión', '18–39', 'Prediabetes', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (79, 'Sí', 'No', 'Solo hipertensión', '18–39', 'Prediabetes', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (80, 'Sí', 'No', 'Solo hipertensión', '18–39', 'Prediabetes', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (81, 'Sí', 'No', 'Solo hipertensión', '18–39', 'Diabetes', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (82, 'Sí', 'No', 'Solo hipertensión', '18–39', 'Diabetes', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (83, 'Sí', 'No', 'Solo hipertensión', '18–39', 'Diabetes', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (84, 'Sí', 'No', 'Solo hipertensión', '18–39', 'Diabetes', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (85, 'Sí', 'No', 'Solo hipertensión', '40–59', 'Normal', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (86, 'Sí', 'No', 'Solo hipertensión', '40–59', 'Normal', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (87, 'Sí', 'No', 'Solo hipertensión', '40–59', 'Normal', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (88, 'Sí', 'No', 'Solo hipertensión', '40–59', 'Normal', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (89, 'Sí', 'No', 'Solo hipertensión', '40–59', 'Prediabetes', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (90, 'Sí', 'No', 'Solo hipertensión', '40–59', 'Prediabetes', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (91, 'Sí', 'No', 'Solo hipertensión', '40–59', 'Prediabetes', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (92, 'Sí', 'No', 'Solo hipertensión', '40–59', 'Prediabetes', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (93, 'Sí', 'No', 'Solo hipertensión', '40–59', 'Diabetes', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (94, 'Sí', 'No', 'Solo hipertensión', '40–59', 'Diabetes', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (95, 'Sí', 'No', 'Solo hipertensión', '40–59', 'Diabetes', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (96, 'Sí', 'No', 'Solo hipertensión', '40–59', 'Diabetes', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (97, 'Sí', 'No', 'Solo hipertensión', '60–74', 'Normal', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (98, 'Sí', 'No', 'Solo hipertensión', '60–74', 'Normal', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (99, 'Sí', 'No', 'Solo hipertensión', '60–74', 'Normal', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (100, 'Sí', 'No', 'Solo hipertensión', '60–74', 'Normal', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (101, 'Sí', 'No', 'Solo hipertensión', '60–74', 'Prediabetes', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (102, 'Sí', 'No', 'Solo hipertensión', '60–74', 'Prediabetes', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (103, 'Sí', 'No', 'Solo hipertensión', '60–74', 'Prediabetes', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (104, 'Sí', 'No', 'Solo hipertensión', '60–74', 'Prediabetes', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (105, 'Sí', 'No', 'Solo hipertensión', '60–74', 'Diabetes', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (106, 'Sí', 'No', 'Solo hipertensión', '60–74', 'Diabetes', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (107, 'Sí', 'No', 'Solo hipertensión', '60–74', 'Diabetes', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (108, 'Sí', 'No', 'Solo hipertensión', '60–74', 'Diabetes', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (109, 'Sí', 'No', 'Solo hipertensión', '75+', 'Normal', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (110, 'Sí', 'No', 'Solo hipertensión', '75+', 'Normal', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (111, 'Sí', 'No', 'Solo hipertensión', '75+', 'Normal', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (112, 'Sí', 'No', 'Solo hipertensión', '75+', 'Normal', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (113, 'Sí', 'No', 'Solo hipertensión', '75+', 'Prediabetes', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (114, 'Sí', 'No', 'Solo hipertensión', '75+', 'Prediabetes', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (115, 'Sí', 'No', 'Solo hipertensión', '75+', 'Prediabetes', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (116, 'Sí', 'No', 'Solo hipertensión', '75+', 'Prediabetes', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (117, 'Sí', 'No', 'Solo hipertensión', '75+', 'Diabetes', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (118, 'Sí', 'No', 'Solo hipertensión', '75+', 'Diabetes', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (119, 'Sí', 'No', 'Solo hipertensión', '75+', 'Diabetes', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (120, 'Sí', 'No', 'Solo hipertensión', '75+', 'Diabetes', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (121, 'No', 'Sí', 'Solo cardíaca', '0–17', 'Normal', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (122, 'No', 'Sí', 'Solo cardíaca', '0–17', 'Normal', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (123, 'No', 'Sí', 'Solo cardíaca', '0–17', 'Normal', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (124, 'No', 'Sí', 'Solo cardíaca', '0–17', 'Normal', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (125, 'No', 'Sí', 'Solo cardíaca', '0–17', 'Prediabetes', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (126, 'No', 'Sí', 'Solo cardíaca', '0–17', 'Prediabetes', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (127, 'No', 'Sí', 'Solo cardíaca', '0–17', 'Prediabetes', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (128, 'No', 'Sí', 'Solo cardíaca', '0–17', 'Prediabetes', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (129, 'No', 'Sí', 'Solo cardíaca', '0–17', 'Diabetes', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (130, 'No', 'Sí', 'Solo cardíaca', '0–17', 'Diabetes', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (131, 'No', 'Sí', 'Solo cardíaca', '0–17', 'Diabetes', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (132, 'No', 'Sí', 'Solo cardíaca', '0–17', 'Diabetes', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (133, 'No', 'Sí', 'Solo cardíaca', '18–39', 'Normal', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (134, 'No', 'Sí', 'Solo cardíaca', '18–39', 'Normal', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (135, 'No', 'Sí', 'Solo cardíaca', '18–39', 'Normal', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (136, 'No', 'Sí', 'Solo cardíaca', '18–39', 'Normal', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (137, 'No', 'Sí', 'Solo cardíaca', '18–39', 'Prediabetes', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (138, 'No', 'Sí', 'Solo cardíaca', '18–39', 'Prediabetes', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (139, 'No', 'Sí', 'Solo cardíaca', '18–39', 'Prediabetes', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (140, 'No', 'Sí', 'Solo cardíaca', '18–39', 'Prediabetes', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (141, 'No', 'Sí', 'Solo cardíaca', '18–39', 'Diabetes', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (142, 'No', 'Sí', 'Solo cardíaca', '18–39', 'Diabetes', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (143, 'No', 'Sí', 'Solo cardíaca', '18–39', 'Diabetes', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (144, 'No', 'Sí', 'Solo cardíaca', '18–39', 'Diabetes', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (145, 'No', 'Sí', 'Solo cardíaca', '40–59', 'Normal', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (146, 'No', 'Sí', 'Solo cardíaca', '40–59', 'Normal', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (147, 'No', 'Sí', 'Solo cardíaca', '40–59', 'Normal', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (148, 'No', 'Sí', 'Solo cardíaca', '40–59', 'Normal', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (149, 'No', 'Sí', 'Solo cardíaca', '40–59', 'Prediabetes', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (150, 'No', 'Sí', 'Solo cardíaca', '40–59', 'Prediabetes', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (151, 'No', 'Sí', 'Solo cardíaca', '40–59', 'Prediabetes', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (152, 'No', 'Sí', 'Solo cardíaca', '40–59', 'Prediabetes', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (153, 'No', 'Sí', 'Solo cardíaca', '40–59', 'Diabetes', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (154, 'No', 'Sí', 'Solo cardíaca', '40–59', 'Diabetes', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (155, 'No', 'Sí', 'Solo cardíaca', '40–59', 'Diabetes', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (156, 'No', 'Sí', 'Solo cardíaca', '40–59', 'Diabetes', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (157, 'No', 'Sí', 'Solo cardíaca', '60–74', 'Normal', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (158, 'No', 'Sí', 'Solo cardíaca', '60–74', 'Normal', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (159, 'No', 'Sí', 'Solo cardíaca', '60–74', 'Normal', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (160, 'No', 'Sí', 'Solo cardíaca', '60–74', 'Normal', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (161, 'No', 'Sí', 'Solo cardíaca', '60–74', 'Prediabetes', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (162, 'No', 'Sí', 'Solo cardíaca', '60–74', 'Prediabetes', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (163, 'No', 'Sí', 'Solo cardíaca', '60–74', 'Prediabetes', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (164, 'No', 'Sí', 'Solo cardíaca', '60–74', 'Prediabetes', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (165, 'No', 'Sí', 'Solo cardíaca', '60–74', 'Diabetes', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (166, 'No', 'Sí', 'Solo cardíaca', '60–74', 'Diabetes', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (167, 'No', 'Sí', 'Solo cardíaca', '60–74', 'Diabetes', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (168, 'No', 'Sí', 'Solo cardíaca', '60–74', 'Diabetes', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (169, 'No', 'Sí', 'Solo cardíaca', '75+', 'Normal', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (170, 'No', 'Sí', 'Solo cardíaca', '75+', 'Normal', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (171, 'No', 'Sí', 'Solo cardíaca', '75+', 'Normal', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (172, 'No', 'Sí', 'Solo cardíaca', '75+', 'Normal', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (173, 'No', 'Sí', 'Solo cardíaca', '75+', 'Prediabetes', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (174, 'No', 'Sí', 'Solo cardíaca', '75+', 'Prediabetes', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (175, 'No', 'Sí', 'Solo cardíaca', '75+', 'Prediabetes', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (176, 'No', 'Sí', 'Solo cardíaca', '75+', 'Prediabetes', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (177, 'No', 'Sí', 'Solo cardíaca', '75+', 'Diabetes', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (178, 'No', 'Sí', 'Solo cardíaca', '75+', 'Diabetes', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (179, 'No', 'Sí', 'Solo cardíaca', '75+', 'Diabetes', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (180, 'No', 'Sí', 'Solo cardíaca', '75+', 'Diabetes', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (181, 'Sí', 'Sí', 'Ambas', '0–17', 'Normal', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (182, 'Sí', 'Sí', 'Ambas', '0–17', 'Normal', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (183, 'Sí', 'Sí', 'Ambas', '0–17', 'Normal', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (184, 'Sí', 'Sí', 'Ambas', '0–17', 'Normal', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (185, 'Sí', 'Sí', 'Ambas', '0–17', 'Prediabetes', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (186, 'Sí', 'Sí', 'Ambas', '0–17', 'Prediabetes', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (187, 'Sí', 'Sí', 'Ambas', '0–17', 'Prediabetes', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (188, 'Sí', 'Sí', 'Ambas', '0–17', 'Prediabetes', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (189, 'Sí', 'Sí', 'Ambas', '0–17', 'Diabetes', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (190, 'Sí', 'Sí', 'Ambas', '0–17', 'Diabetes', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (191, 'Sí', 'Sí', 'Ambas', '0–17', 'Diabetes', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (192, 'Sí', 'Sí', 'Ambas', '0–17', 'Diabetes', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (193, 'Sí', 'Sí', 'Ambas', '18–39', 'Normal', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (194, 'Sí', 'Sí', 'Ambas', '18–39', 'Normal', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (195, 'Sí', 'Sí', 'Ambas', '18–39', 'Normal', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (196, 'Sí', 'Sí', 'Ambas', '18–39', 'Normal', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (197, 'Sí', 'Sí', 'Ambas', '18–39', 'Prediabetes', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (198, 'Sí', 'Sí', 'Ambas', '18–39', 'Prediabetes', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (199, 'Sí', 'Sí', 'Ambas', '18–39', 'Prediabetes', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (200, 'Sí', 'Sí', 'Ambas', '18–39', 'Prediabetes', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (201, 'Sí', 'Sí', 'Ambas', '18–39', 'Diabetes', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (202, 'Sí', 'Sí', 'Ambas', '18–39', 'Diabetes', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (203, 'Sí', 'Sí', 'Ambas', '18–39', 'Diabetes', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (204, 'Sí', 'Sí', 'Ambas', '18–39', 'Diabetes', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (205, 'Sí', 'Sí', 'Ambas', '40–59', 'Normal', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (206, 'Sí', 'Sí', 'Ambas', '40–59', 'Normal', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (207, 'Sí', 'Sí', 'Ambas', '40–59', 'Normal', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (208, 'Sí', 'Sí', 'Ambas', '40–59', 'Normal', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (209, 'Sí', 'Sí', 'Ambas', '40–59', 'Prediabetes', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (210, 'Sí', 'Sí', 'Ambas', '40–59', 'Prediabetes', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (211, 'Sí', 'Sí', 'Ambas', '40–59', 'Prediabetes', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (212, 'Sí', 'Sí', 'Ambas', '40–59', 'Prediabetes', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (213, 'Sí', 'Sí', 'Ambas', '40–59', 'Diabetes', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (214, 'Sí', 'Sí', 'Ambas', '40–59', 'Diabetes', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (215, 'Sí', 'Sí', 'Ambas', '40–59', 'Diabetes', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (216, 'Sí', 'Sí', 'Ambas', '40–59', 'Diabetes', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (217, 'Sí', 'Sí', 'Ambas', '60–74', 'Normal', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (218, 'Sí', 'Sí', 'Ambas', '60–74', 'Normal', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (219, 'Sí', 'Sí', 'Ambas', '60–74', 'Normal', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (220, 'Sí', 'Sí', 'Ambas', '60–74', 'Normal', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (221, 'Sí', 'Sí', 'Ambas', '60–74', 'Prediabetes', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (222, 'Sí', 'Sí', 'Ambas', '60–74', 'Prediabetes', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (223, 'Sí', 'Sí', 'Ambas', '60–74', 'Prediabetes', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (224, 'Sí', 'Sí', 'Ambas', '60–74', 'Prediabetes', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (225, 'Sí', 'Sí', 'Ambas', '60–74', 'Diabetes', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (226, 'Sí', 'Sí', 'Ambas', '60–74', 'Diabetes', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (227, 'Sí', 'Sí', 'Ambas', '60–74', 'Diabetes', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (228, 'Sí', 'Sí', 'Ambas', '60–74', 'Diabetes', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (229, 'Sí', 'Sí', 'Ambas', '75+', 'Normal', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (230, 'Sí', 'Sí', 'Ambas', '75+', 'Normal', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (231, 'Sí', 'Sí', 'Ambas', '75+', 'Normal', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (232, 'Sí', 'Sí', 'Ambas', '75+', 'Normal', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (233, 'Sí', 'Sí', 'Ambas', '75+', 'Prediabetes', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (234, 'Sí', 'Sí', 'Ambas', '75+', 'Prediabetes', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (235, 'Sí', 'Sí', 'Ambas', '75+', 'Prediabetes', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (236, 'Sí', 'Sí', 'Ambas', '75+', 'Prediabetes', 'Obesidad');
-INSERT INTO dim_perfil_clinico VALUES (237, 'Sí', 'Sí', 'Ambas', '75+', 'Diabetes', 'Bajo peso');
-INSERT INTO dim_perfil_clinico VALUES (238, 'Sí', 'Sí', 'Ambas', '75+', 'Diabetes', 'Normal');
-INSERT INTO dim_perfil_clinico VALUES (239, 'Sí', 'Sí', 'Ambas', '75+', 'Diabetes', 'Sobrepeso');
-INSERT INTO dim_perfil_clinico VALUES (240, 'Sí', 'Sí', 'Ambas', '75+', 'Diabetes', 'Obesidad');
-COMMIT;
 
 -- Carga de dim_prediccion (12 filas)
 BEGIN;

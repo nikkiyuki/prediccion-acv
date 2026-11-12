@@ -1,11 +1,13 @@
 # ETL de la bodega de ACV en KNIME
 
-Este flujo corresponde al punto 2 de la práctica de BI: transforma el CSV histórico y carga las dimensiones de pacientes y la tabla de hechos de la bodega diseñada por el equipo.
+Este flujo corresponde al punto 2 de la práctica de BI: transforma el CSV histórico y carga la dimensión de pacientes y la tabla de hechos de la bodega diseñada por el equipo.
+
+> **Versión corregida (noviembre de 2026).** Siguiendo la retroalimentación de la docente, la hipertensión y la enfermedad cardíaca pasaron a `dim_paciente` (son de la persona y no cambian entre consultas), los rangos de edad, glucosa e IMC pasaron a la tabla de hechos (se miden en cada evaluación) y se eliminó `dim_perfil_clinico`. En el flujo se quitaron el DB Query Reader del perfil clínico y su Joiner; el GroupBy agrupa también `hipertension` y `enfermedad_cardiaca`, y el Column Filter de evaluaciones incluye los tres rangos. Detalle en [bodega/CAMBIOS_ETL.md](../../bodega/CAMBIOS_ETL.md).
 
 ## Archivos
 
 - [ETL_ACV.knwf](../../knime/ETL_ACV.knwf): proyecto KNIME con el CSV y las tablas de equivalencias incluidos.
-- [bodega_acv.db](../../bodega/bodega_acv.db): base original, con los catálogos cargados y pacientes y evaluaciones vacíos.
+- [bodega_acv.db](../../bodega/bodega_acv.db): base original, con los catálogos de tiempo y predicción cargados y pacientes y evaluaciones vacíos.
 - [crear_bodega.sql](../../bodega/crear_bodega.sql): creación de la bodega del punto 1.
 - [flujo.svg](flujo.svg): vista del flujo exportada desde KNIME.
 - [validacion.json](validacion.json): resultados de la validación realizada.
@@ -13,7 +15,7 @@ Este flujo corresponde al punto 2 de la práctica de BI: transforma el CSV hist�
 ## Importar y ejecutar
 
 1. Descargar `knime/ETL_ACV.knwf` e importarlo desde **Local space → Import workflow** en KNIME. Se validó con KNIME Analytics Platform 5.12.
-2. Copiar `bodega/bodega_acv.db` a una carpeta de trabajo con el nombre `bodega_acv_trabajo.db`. Así se conserva la base original del repositorio. La copia debe contener sus tres catálogos iniciales.
+2. Copiar `bodega/bodega_acv.db` a una carpeta de trabajo con el nombre `bodega_acv_trabajo.db`. Así se conserva la base original del repositorio. La copia debe contener sus dos catálogos iniciales (tiempo y predicción).
 3. Abrir **DB Connector** y establecer la URL JDBC de esa copia. Por ejemplo, en Windows: `jdbc:sqlite:C:/ruta/bodega_acv_trabajo.db`. La ruta se deja vacía en el archivo distribuido para que cada integrante elija su copia; no requiere usuario ni contraseña.
 4. Ejecutar todo el flujo. Los CSV usan rutas relativas al proyecto importado; no es necesario configurar cada lector.
 5. Consultar la salida del último **DB Query Reader** y comparar `resultado` con `esperado`.
@@ -29,10 +31,10 @@ El archivo se distribuye sin resultados en caché: hay que ejecutarlo para gener
 - Para los rangos de edad, glucosa e IMC, **Row Filter** selecciona los intervalos, **Constant Value Column Appender** agrega las etiquetas y **Concatenate** reúne las ramas disjuntas.
 - **Column Filter**, **Column Renamer** y **Joiner** conservan el ID original y agregan la clave de paciente.
 - **GroupBy** obtiene pacientes únicos.
-- Los **DB Query Reader** leen los catálogos existentes. Los **Joiner** encuentran las claves de perfil clínico, fecha y predicción.
+- Los **DB Query Reader** leen los catálogos existentes. Los **Joiner** encuentran las claves de fecha y predicción.
 - Dos uniones que conservan solo las filas sin coincidencia excluyen pacientes y evaluaciones ya cargados. Los dos **DB Writer** insertan únicamente registros nuevos. Esta ETL no actualiza evaluaciones ya existentes.
 
-Los 78 nodos no incluyen Rule Engine ni SQL Executor. Los DB Query Reader solo consultan la base.
+Los 76 nodos no incluyen Rule Engine ni SQL Executor. Los DB Query Reader solo consultan la base.
 
 ## Criterios utilizados
 
@@ -47,7 +49,9 @@ No se cambian el esquema ni los catálogos. La carga actual utiliza el históric
 
 ## Validación
 
-El 2026-10-28 se ejecutaron los 78 nodos y se verificaron individualmente los 5.110 registros contra el CSV y los perfiles de la base publicada:
+Con la versión corregida, la salida del último DB Query Reader debe mostrar `resultado` igual a `esperado` en todas sus filas: 5.110 pacientes y evaluaciones, 365 fechas, 12 entradas de predicción, 201 IMC imputados, 249 ACV reales, 498 hipertensos, 276 con enfermedad cardíaca, 518 mayores de 75 y cero errores de claves foráneas. Estos valores se comprobaron con una carga de prueba equivalente sobre la bodega corregida.
+
+Validación de la versión anterior (2026-10-28, con `dim_perfil_clinico`): se ejecutaron los 78 nodos y se verificaron individualmente los 5.110 registros contra el CSV y los perfiles de la base publicada:
 
 - 5.110 pacientes y 5.110 evaluaciones.
 - 240 perfiles, 365 fechas y 12 entradas de predicción.
